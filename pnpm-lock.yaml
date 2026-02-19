@@ -15,6 +15,9 @@ importers:
         specifier: ^4.18.7
         version: 4.18.10(@cordisjs/plugin-http@0.6.3(cordis@3.18.1))(cordis@3.18.1)
     devDependencies:
+      '@types/node':
+        specifier: ^25.3.0
+        version: 25.3.0
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

@@ -1,0 +1,83 @@
+name: Publish Package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+
+      - run: npm install -g npm@^11.5.1
+
+      - name: Compare local and remote versions
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          LOCAL_VERSION=$(node -p "require('./package.json').version")
+          REMOTE_VERSION=$(npm view "$PACKAGE_NAME" version 2>/dev/null || true)
+
+          if [ -z "$REMOTE_VERSION" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "package=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+            echo "local=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+            echo "remote=(none)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$LOCAL_VERSION" = "$REMOTE_VERSION" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "package=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+            echo "local=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+            echo "remote=$REMOTE_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST=$(printf "%s\n%s\n" "$LOCAL_VERSION" "$REMOTE_VERSION" | sort -V | tail -n1)
+          if [ "$LATEST" = "$LOCAL_VERSION" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "package=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "local=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "remote=$REMOTE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - run: echo "package=${{ steps.version.outputs.package }}, local=${{ steps.version.outputs.local }}, remote=${{ steps.version.outputs.remote }}, publish=${{ steps.version.outputs.publish }}"
+
+      - if: steps.version.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - if: steps.version.outputs.publish == 'true'
+        run: pnpm run typecheck
+
+      - if: steps.version.outputs.publish == 'true'
+        run: pnpm run --if-present build
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm publish --access public --provenance

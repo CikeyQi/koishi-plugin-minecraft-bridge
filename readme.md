@@ -1,5 +1,234 @@
-# koishi-plugin-minecraft-bridge
+![koishi-plugin-minecraft-bridge](https://socialify.git.ci/CikeyQi/koishi-plugin-minecraft-bridge/image?description=1\&font=Raleway\&forks=1\&issues=1\&language=1\&name=1\&owner=1\&pattern=Circuit%20Board\&pulls=1\&stargazers=1\&theme=Auto)
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-minecraft-bridge?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-minecraft-bridge)
+<div align="center">
 
-基于 Koishi 的 Minecraft 消息互通插件
+# Minecraft Bridge
+
+基于 Koishi 的 Minecraft 消息互通插件，使用面向鹊桥 Protocol V2 的 Node.js SDK 实现群聊与服务器双向通信。
+
+</div>
+
+---
+
+## 📦 安装
+
+在 Koishi 插件市场搜索 `minecraft-bridge` 即可安装。
+
+或使用包管理器：
+
+```sh
+# pnpm
+pnpm add koishi-plugin-minecraft-bridge
+
+# yarn
+yarn add koishi-plugin-minecraft-bridge
+
+# npm
+npm i koishi-plugin-minecraft-bridge
+```
+
+---
+
+## ⚙️ 配置指南
+
+### 📌 前置准备
+
+开始前，请先在 Minecraft 服务端安装 **QueQiao**：
+
+👉 https://modrinth.com/plugin/queqiao
+
+准备内容：
+
+1. Minecraft 服务端已安装 QueQiao
+
+2. 参考官方配置文档
+   https://queqiao-docs.netlify.app/config/
+
+3. 根据 QueQiao 连接模式选择插件连接方式：
+
+   * `websocket_server.enable = true` → 使用 **正向连接**（Koishi → MC）
+   * `websocket_client.enable = true` → 使用 **反向连接**（MC → Koishi）
+
+4. 从 QueQiao 配置文件记录：
+
+   * `server_name`（服务器标识）
+   * `access_token`（连接令牌）
+
+5. 明确要桥接的目标：
+
+   * 群标识（推荐 `平台:频道ID` 格式）
+   * 机器人 `selfId`
+
+💡 如果不清楚 `频道ID` 或 `selfId`，可在 Koishi 中使用 `inspect` 查看。
+
+---
+
+### 🔌 QueQiao 端配置
+
+官方文档：
+https://queqiao-docs.netlify.app/config/
+
+连接模式对应关系：
+
+| QueQiao 配置                       | 插件连接方式            | 关键配置                                                  |
+| -------------------------------- | ----------------- | ----------------------------------------------------- |
+| `websocket_server.enable = true` | 正向连接（Koishi 主动连接） | `servers[].forward` `servers[].url` `servers[].token` |
+| `websocket_client.enable = true` | 反向连接（MC 主动连接）     | `reverse` `path` `port` `token`                       |
+
+两种模式可同时启用。
+
+配置完成后请确认：
+
+* `server_name` → 对应 `servers[].name`
+* `access_token` → 对应连接 token（正向/反向）
+
+---
+
+### 🤖 Koishi 端配置
+
+插件配置分为 **全局配置** 与 **服务器配置**。
+
+---
+
+#### 全局配置
+
+| 参数           | 说明         | 默认      |
+| ------------ | ---------- | ------- |
+| `prefix`     | 内置命令前缀     | `#`     |
+| `groupName`  | MC 中显示群名称  | `true`  |
+| `serverName` | 群中显示服务器名称  | `true`  |
+| `verb`       | 消息连接词      | `说：`    |
+| `ciImage`    | 图片转 CICode | `false` |
+| `debug`      | 调试日志       | `false` |
+
+---
+
+#### 反向连接配置
+
+| 参数        | 说明                     | 默认              |
+| --------- | ---------------------- | --------------- |
+| `reverse` | 启用反向连接                 | `true`          |
+| `path`    | WebSocket 路径           | `/minecraft/ws` |
+| `port`    | 监听端口                   | `8080`          |
+| `token`   | QueQiao `access_token` | `''`            |
+
+---
+
+#### `servers[]`（支持多个服务器）
+
+| 参数         | 说明                           | 默认值                  |
+| ---------- | ---------------------------- | -------------------- |
+| `name`     | 必须与 QueQiao `server_name` 一致 | —（必填）                |
+| `channels` | 群列表（`平台:频道ID` 或 `频道ID`）      | `[]`                 |
+| `bots`     | 发送群消息的机器人 `selfId`           | `[]`                 |
+| `forward`  | 启用正向连接                       | `true`               |
+| `url`      | 正向 WebSocket 地址              | `ws://127.0.0.1:8081` |
+| `token`    | QueQiao `access_token`       | `''`                 |
+| `retries`  | 最大重连次数（0 为无限）                | `3`                  |
+| `rcon`     | RCON 命令前缀                    | `/`                  |
+| `users`    | RCON 白名单（为空仅管理员可用）           | `[]`                 |
+| `mask`     | MC → 群消息过滤正则                 | `''`                 |
+
+💡 获取 `channels` / `bots`：
+
+在目标群发送 `inspect`，按返回信息填写。
+
+---
+
+## 🚀 使用说明
+
+### 基础命令（默认前缀 `#`）
+
+| 命令               | 权限  | 说明        |
+| ---------------- | --- | --------- |
+| `#mcs`           | 所有人 | 查看服务器连接状态 |
+| `#mcr`           | 管理员 | 重连所有服务器   |
+| `#mct <文本>`      | 所有人（仅群聊） | 发送标题      |
+| `#mcst <文本>`     | 所有人（仅群聊） | 发送副标题     |
+| `#mcab <文本>`     | 所有人（仅群聊） | 发送动作栏     |
+| `#mcp <玩家> <文本>` | 所有人（仅群聊） | 向玩家发送私聊   |
+
+---
+
+### 🔄 消息同步机制
+
+* **群 → MC**：普通群消息自动同步
+* **MC → 群**：聊天、进退服、死亡、成就等事件同步
+* 支持：
+
+  * 一个群绑定多个服务器
+  * 一个服务器绑定多个群
+
+---
+
+### 🧰 RCON 使用
+
+群内发送以 RCON 前缀（默认 `/`）开头的消息即可执行（仅群聊生效）：
+
+```
+/list
+/tps
+```
+
+权限规则：
+
+* 管理员（authority ≥ 4）始终允许
+* 普通用户需在 `users` 白名单中
+
+---
+
+## 🛠 常见问题排查
+
+### 1️⃣ `#mcs` 显示未连接
+
+检查：
+
+* `servers[].name` 是否与 `server_name` 完全一致（区分大小写）
+* token 是否一致
+* 正向模式 → `forward` + `url` 可访问
+* 反向模式 → `reverse/path/port/token` 匹配
+* 可开启 `debug` 查看日志
+
+---
+
+### 2️⃣ MC 消息未同步到群
+
+检查：
+
+* 是否配置 `channels` 和 `bots`
+* `inspect` 获取的 ID 是否正确
+* 机器人是否在线
+* `mask` 是否过滤全部消息
+
+---
+
+### 3️⃣ 群消息未同步到 MC
+
+检查：
+
+* 仅群聊消息会同步
+* `channels` 是否匹配
+* RCON 前缀消息不会作为聊天转发
+* 正向连接是否启用
+
+---
+
+### 4️⃣ RCON 无响应或无权限
+
+检查：
+
+* 前缀是否匹配 `rcon`
+* 用户是否在白名单
+* 命令在 MC 端是否有效
+
+---
+
+## 📄 License
+
+    Copyright (c) 2026-present CikeyQi
+
+    Licensed under the GNU Affero General Public License v3.0.
+    You may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+    https://www.gnu.org/licenses/agpl-3.0.html
