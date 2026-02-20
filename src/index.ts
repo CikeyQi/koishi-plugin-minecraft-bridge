@@ -1,6 +1,7 @@
 import { Context, Logger, Schema } from 'koishi'
 import { bridgeConfigSchema, type BridgeConfig } from './values'
 import { Bridge } from './app/main'
+import { McBridgeService } from './service'
 
 export const name = 'minecraft-bridge'
 export const inject = { optional: ['i18n'] }
@@ -59,8 +60,11 @@ export const usage = `
  * 这里只负责创建主流程对象，所有业务逻辑都放在 app/main.ts 中。
  */
 export function apply(ctx: Context, config?: Config) {
-  new Bridge(ctx, config, logger)
+  const bridge = new Bridge(ctx, config, logger)
+  ctx.plugin(McBridgeService, bridge)
 }
+
+export * from './service'
 
 const plugin = {
   name,

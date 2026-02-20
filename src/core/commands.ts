@@ -74,5 +74,3 @@ export const buildCmd = (commandPrefix = '#'): BuiltinMatchers => {
     ],
   }
 }
-
-export const buildBuiltinMatchers = buildCmd

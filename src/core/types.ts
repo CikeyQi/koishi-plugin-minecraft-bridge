@@ -21,7 +21,6 @@ export interface SessionLike {
   elements?: SessionElementLike[] | undefined
   user?: { authority?: number | undefined } | undefined
   author?: {
-    authority?: number | undefined
     nick?: string | undefined
     name?: string | undefined
   } | undefined

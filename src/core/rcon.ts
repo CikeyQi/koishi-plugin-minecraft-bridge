@@ -32,5 +32,3 @@ export const toRcon = (rawReply: unknown, translate?: I18nTranslate): string => 
 
   return message || t('message.rconSuccess', '命令执行成功')
 }
-
-export const formatRconResult = toRcon

@@ -10,6 +10,7 @@ export interface ServerConfig {
   bots: string[]
   rcon: string
   users: string[]
+  ciImage: boolean
   mask: string
 }
 
@@ -22,7 +23,6 @@ export interface BridgeConfig {
   groupName: boolean
   serverName: boolean
   verb: string
-  ciImage: boolean
   servers: ServerConfig[]
   debug: boolean
 }
@@ -59,6 +59,7 @@ const cmdSchema = Schema.object({
 }).description('命令与权限').collapse()
 
 const msgSchema = Schema.object({
+  ciImage: Schema.boolean().default(false).description('是否将图片转成 CICode 再发到 MC'),
   mask: Schema.string().default('').description('转发到群前的屏蔽正则（不需要写 /.../g）'),
 }).description('消息处理').collapse()
 
@@ -75,7 +76,6 @@ const appSchema = Schema.object({
   groupName: Schema.boolean().default(true).description('群聊消息向MC同步时附带群名'),
   serverName: Schema.boolean().default(true).description('MC消息向群聊同步时附带服务器名'),
   verb: Schema.string().default('说：').description('玩家名和消息之间的连接词'),
-  ciImage: Schema.boolean().default(false).description('是否将图片转成 CICode 再发到 MC'),
 }).description('全局行为')
 
 const reverseSchema = Schema.object({

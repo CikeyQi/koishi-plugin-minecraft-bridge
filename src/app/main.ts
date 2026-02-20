@@ -1,19 +1,19 @@
-import type { QueQiaoEvent } from '@cikeyqi/queqiao-node-sdk'
+import type { QueQiaoEvent, RequestOptions } from '@cikeyqi/queqiao-node-sdk'
 import type { Context, Logger } from 'koishi'
-import type { BridgeConfig, ServerItemConfig } from '../values'
+import { bridgeConfigSchema, type BridgeConfig, type ServerItemConfig } from '../values'
 import { ClientRuntime } from '../core/client-runtime'
 import { buildCmd } from '../core/commands'
 import { toEvent } from '../core/event'
 import { makeLog } from '../core/log'
 import { toRcon } from '../core/rcon'
-import type { GroupApiCommand, I18nTranslate, JsonRecord, SessionLike } from '../core/types'
-import { imageOf, isRecord, parseChannelRef, parseJson, textOf, toError, toJson, uniqTexts } from '../core/utils'
-import { fixCfg } from './conf'
+import type { GroupApiCommand, I18nTranslate, SessionLike } from '../core/types'
+import { imageOf, parseChannelRef, textOf, toError, toJson, uniqTexts } from '../core/utils'
 import { Lang } from './lang'
 import { Route } from './route'
 import { type BotLike, isAdmin, isBot, isGroup, toMc } from './sess'
+import { MC_BRIDGE_ERR, MC_BRIDGE_EVENT, makeMcBridgeError } from '../service'
 
-const U_SERVER = '未命名服务器'
+const UNKNOWN_SERVER = '未命名服务器'
 
 export class Bridge {
   private cfg: BridgeConfig
@@ -26,8 +26,8 @@ export class Bridge {
   private masks = new Map<string, RegExp | null>()
   private stop = false
 
-  constructor(private ctx: Context, raw: unknown, logger: Logger) {
-    this.cfg = fixCfg(raw)
+  constructor(private ctx: Context, config: BridgeConfig | undefined, logger: Logger) {
+    this.cfg = bridgeConfigSchema(config)
     this.lang = new Lang(ctx)
     this.log = makeLog(logger)
     this.cmd = buildCmd(this.cfg.prefix)
@@ -44,27 +44,32 @@ export class Bridge {
   }
 
   /**
-   * 统一绑定生命周期事件。
-   * 入口只要初始化一次，就能接管 ready/message/dispose 三类流程。
+   * 提供给外部 service 调用的统一请求入口。
+   * 多连接时要求显式传 selfName，避免误发到错误服务器。
    */
+  public request(api: string, data: Record<string, unknown>, options: RequestOptions = {}) {
+    const selfName = textOf(options.selfName)
+    if (selfName) return this.run.request(selfName, api, data, options)
+
+    const online = this.run.connectedNames()
+    if (online.length === 1) return this.run.request(online[0], api, data, options)
+    if (!online.length) throw makeMcBridgeError(MC_BRIDGE_ERR.EMPTY_SERVER, '当前没有在线服务器，无法调用 request')
+
+    throw makeMcBridgeError(MC_BRIDGE_ERR.NEED_SELF_NAME, '多服务器连接时，request 需要 options.selfName')
+  }
+
+  /** 统一绑定生命周期事件。 */
   private bind() {
     this.onReady()
     this.onMsg()
     this.onStop()
   }
 
-  /**
-   * 获取翻译函数。
-   * 有会话就按会话语言输出，没有会话就走全局语言。
-   */
   private t(session?: SessionLike): I18nTranslate {
     return this.lang.pick(session)
   }
 
-  /**
-   * 处理重连上限。
-   * 当同一服务器连续重连达到上限时，主动关闭该连接，避免刷日志。
-   */
+  /** 处理重连上限。 */
   private retry(name: string, count: number) {
     const srv = this.route.one(name)
     const max = Number(srv?.retries || 0)
@@ -74,38 +79,27 @@ export class Bridge {
     }
   }
 
-  /**
-   * 统一解包入站事件。
-   * 兼容 SDK 多种事件封装，并在单连接场景补齐 server_name。
-   */
-  private unpack(rawEvt: QueQiaoEvent | JsonRecord | string) {
-    let raw: unknown = rawEvt
-    if (isRecord(rawEvt) && isRecord(rawEvt.data)) {
-      const data = rawEvt.data
-      if ('post_type' in data || 'event_name' in data || 'sub_type' in data) {
-        raw = data
-      }
+  /** 广播原始事件给外部插件监听。 */
+  private emitEvent(rawEvt: QueQiaoEvent) {
+    try {
+      const emit = this.ctx.emit as unknown as (name: string, payload: unknown) => void
+      emit(MC_BRIDGE_EVENT, rawEvt)
+    } catch (err) {
+      this.log.error('event', `处理 ${MC_BRIDGE_EVENT} 监听器失败：${toError(err)}`)
     }
-
-    const evt = parseJson(raw)
-    if (!evt) return null
-
-    if (!textOf(evt.server_name)) {
-      const online = this.run.connectedNames()
-      if (online.length === 1) return { ...evt, server_name: online[0] }
-    }
-
-    return evt
   }
 
-  /**
-   * 处理 MC -> 群 的事件入口。
-   * 只做三件事：解包、格式化、分发。
-   */
-  private onEvt(rawEvt: QueQiaoEvent | JsonRecord | string) {
+  /** 处理 MC -> 群 的事件入口。 */
+  private onEvt(rawEvt: QueQiaoEvent) {
+    this.emitEvent(rawEvt)
+
     try {
-      const evt = this.unpack(rawEvt)
-      if (!evt) return
+      const evt = textOf(rawEvt.server_name)
+        ? rawEvt
+        : (() => {
+            const online = this.run.connectedNames()
+            return online.length === 1 ? { ...rawEvt, server_name: online[0] } : rawEvt
+          })()
 
       this.log.debug(this.cfg.debug, 'event', `收到事件：${toJson(evt)}`)
 
@@ -125,10 +119,7 @@ export class Bridge {
     }
   }
 
-  /**
-   * 构建机器人索引。
-   * 先按 selfId 分组，后续推送消息时可以少做很多遍历。
-   */
+  /** 按 selfId 构建机器人索引。 */
   private bots() {
     const map = new Map<string, BotLike[]>()
     for (const bot of this.ctx.bots as BotLike[]) {
@@ -141,10 +132,6 @@ export class Bridge {
     return map
   }
 
-  /**
-   * 编译并缓存屏蔽正则。
-   * 同一条规则只编译一次，避免高频消息场景重复创建 RegExp。
-   */
   private reg(word: string) {
     const key = textOf(word)
     if (!key) return null
@@ -160,12 +147,9 @@ export class Bridge {
     }
   }
 
-  /**
-   * 安全发送单条群消息。
-   * 发送失败只记录日志，不抛异常，避免影响其他目标群。
-   */
+  /** 安全发送单条群消息。 */
   private async send(botId: string, bot: BotLike, chan: string, msg: string) {
-    const platform = textOf(bot.platform) || 'unknown'
+    const platform = textOf(bot.platform) || '未知平台'
     try {
       await bot.broadcast([chan], msg, 0)
       this.log.debug(this.cfg.debug, 'sync', `已发送到 ${platform}:${chan}（机器人 ${botId}）`)
@@ -174,12 +158,9 @@ export class Bridge {
     }
   }
 
-  /**
-   * 将 MC 消息分发到配置的群。
-   * 这里会处理屏蔽词、机器人筛选、平台筛选和并发发送。
-   */
+  /** 将 MC 消息分发到配置群。 */
   private async sendGroup(rawMsg: string, srv: ServerItemConfig) {
-    const name = textOf(srv.name) || U_SERVER
+    const name = textOf(srv.name) || UNKNOWN_SERVER
     const botIds = uniqTexts(srv.bots || [])
     const refs = uniqTexts(srv.channels || [])
     if (!botIds.length || !refs.length) {
@@ -225,20 +206,14 @@ export class Bridge {
     if (jobs.length) await Promise.allSettled(jobs)
   }
 
-  /**
-   * 获取当前群关联的服务器列表。
-   * 优先按 platform:channel 匹配，再按 channel 兜底。
-   */
+  /** 获取当前群关联的服务器列表。 */
   private srvs(session: SessionLike) {
     const channel = textOf(session.channelId)
     if (!channel) return []
     return this.route.list(textOf(session.platform), channel)
   }
 
-  /**
-   * 在关联服务器上并发执行任务。
-   * 某个服务器失败不会中断其余服务器，保证整体可用性。
-   */
+  /** 在关联服务器上并发执行任务。 */
   private async forSrv(session: SessionLike, task: (srv: ServerItemConfig, name: string) => Promise<void>) {
     if (!isGroup(session)) return false
 
@@ -261,20 +236,13 @@ export class Bridge {
     return true
   }
 
-  /**
-   * 读取 RCON 命令正文。
-   * 命中前缀则返回命令，不命中返回 null。
-   */
+  /** 读取 RCON 命令正文。 */
   private readCmd(msg: string, srv: ServerItemConfig) {
     const head = textOf(srv.rcon || '/')
     const text = String(msg || '')
     return head && text.startsWith(head) ? text.slice(head.length).trim() : null
   }
 
-  /**
-   * 判断用户是否可执行命令。
-   * 管理员始终放行；普通用户需命中服务器白名单。
-   */
   private canCmd(srv: ServerItemConfig, session: SessionLike) {
     if (isAdmin(session)) return true
 
@@ -286,10 +254,7 @@ export class Bridge {
     return set.has(textOf(session.userId))
   }
 
-  /**
-   * 执行 RCON 命令并回显结果。
-   * 出错时直接给群里返回友好提示，避免“无响应”体验。
-   */
+  /** 执行 RCON 命令并回显结果。 */
   private async runCmd(session: SessionLike, name: string, cmd: string) {
     if (!cmd) {
       await session.send(this.lang.sess(session, 'message.commandInputRequired', '请输入要执行的命令。'))
@@ -307,10 +272,7 @@ export class Bridge {
     }
   }
 
-  /**
-   * 处理普通群消息同步。
-   * 命中 RCON 前缀走命令，不命中则走聊天转发。
-   */
+  /** 处理普通群消息同步。 */
   private async runChat(session: SessionLike) {
     await this.forSrv(session, async (srv, name) => {
       const cmd = this.readCmd(session.content || '', srv)
@@ -324,7 +286,7 @@ export class Bridge {
       }
 
       try {
-        const msg = toMc(session, this.cfg, this.t(session))
+        const msg = toMc(session, this.cfg, srv.ciImage, this.t(session))
         await this.run.request(name, 'broadcast', { message: msg })
       } catch (err) {
         this.log.debug(this.cfg.debug, 'sync', `同步群聊到 ${name} 失败：${toError(err)}`)
@@ -332,17 +294,14 @@ export class Bridge {
     })
   }
 
-  /**
-   * 处理状态查询命令。
-   * 输出每个服务器当前连接情况，方便快速判断是否在线。
-   */
+  /** 处理状态查询命令。 */
   private async runStat(session: SessionLike) {
     try {
       const online = new Set(this.run.connectedNames())
       const lines: string[] = [this.lang.sess(session, 'message.statusHeader', '当前连接情况：')]
 
       for (const srv of this.cfg.servers) {
-        const name = textOf(srv.name) || this.lang.sess(session, 'common.unknownServer', U_SERVER)
+        const name = textOf(srv.name) || this.lang.sess(session, 'common.unknownServer', UNKNOWN_SERVER)
         const status = online.has(name)
           ? this.lang.sess(session, 'message.statusConnected', '已连接')
           : this.lang.sess(session, 'message.statusDisconnected', '未连接')
@@ -359,13 +318,10 @@ export class Bridge {
     }
   }
 
-  /**
-   * 处理重连命令。
-   * 仅管理员可用，执行后会返回当前已连接服务器列表。
-   */
+  /** 处理重连命令。 */
   private async runLink(session: SessionLike) {
     if (!isAdmin(session)) {
-      await session.send(this.lang.sess(session, 'message.reconnectNoPermission', '权限不够，只有管理员可以用。'))
+      await session.send(this.lang.sess(session, 'message.reconnectNoPermission', '权限不足，只有管理员可以用。'))
       return
     }
 
@@ -375,7 +331,7 @@ export class Bridge {
       const online = this.run.connectedNames()
       await session.send(
         online.length
-          ? this.lang.sess(session, 'message.reconnectDone', `重连完成，已连接：${online.join(', ')}`, [online.join(', ')])
+          ? this.lang.sess(session, 'message.reconnectDone', `重连完成，已连接：{0}`, [online.join(', ')])
           : this.lang.sess(session, 'message.reconnectDoneEmpty', '重连完成，但当前没有可用连接。'),
       )
     } catch (err) {
@@ -385,10 +341,7 @@ export class Bridge {
     }
   }
 
-  /**
-   * 处理群 API 命令（标题/副标题/动作栏/私聊）。
-   * 统一命令解析和错误提示，减少重复逻辑。
-   */
+  /** 处理群 API 命令（标题/副标题/动作栏/私聊）。 */
   private async runApi(session: SessionLike, cmd: GroupApiCommand): Promise<boolean> {
     if (!isGroup(session)) return false
 
@@ -424,10 +377,7 @@ export class Bridge {
     return true
   }
 
-  /**
-   * 处理内置系统命令。
-   * 命令没命中时返回 false，让后续流程继续处理普通消息。
-   */
+  /** 处理内置系统命令。 */
   private async runSys(session: SessionLike): Promise<boolean> {
     const text = String(session.content || '').trim()
     const head = textOf(this.cfg.prefix)
@@ -450,10 +400,7 @@ export class Bridge {
     return false
   }
 
-  /**
-   * 绑定消息事件。
-   * 这里把“过滤机器人消息、系统命令、普通同步”三段流程串起来。
-   */
+  /** 绑定消息事件。 */
   private onMsg() {
     this.ctx.on('message', async (session) => {
       const cur = session as unknown as SessionLike
@@ -464,10 +411,7 @@ export class Bridge {
     })
   }
 
-  /**
-   * 绑定 ready 事件。
-   * Koishi 完成启动后再去建立网络连接，能减少初始化时序问题。
-   */
+  /** 绑定 ready 事件。 */
   private onReady() {
     this.ctx.on('ready', () => {
       if (this.stop) return
@@ -475,10 +419,7 @@ export class Bridge {
     })
   }
 
-  /**
-   * 绑定 dispose 事件。
-   * 插件卸载时主动关掉连接，避免出现“已卸载但仍在转发”的残留行为。
-   */
+  /** 绑定 dispose 事件。 */
   private onStop() {
     this.ctx.on('dispose', async () => {
       this.stop = true

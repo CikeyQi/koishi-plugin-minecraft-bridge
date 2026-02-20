@@ -1,20 +1,19 @@
 import { createClient, createReverseClient, type QueQiaoClient, type QueQiaoEvent, type RequestOptions } from '@cikeyqi/queqiao-node-sdk'
 import type { Logger } from 'koishi'
 import type { BridgeConfig } from '../values'
-import type { JsonRecord } from './types'
 import { scopedLog } from './log'
 import { isRecord, textOf, toError } from './utils'
 
 interface ClientRuntimeOptions {
   logger: Logger
   getConfig: () => BridgeConfig
-  onEvent: (eventData: QueQiaoEvent | JsonRecord | string) => void
+  onEvent: (eventData: QueQiaoEvent) => void
   onReconnect: (serverName: string, retryCount: number) => void
 }
 
 export class ClientRuntime {
   private readonly getConfig: () => BridgeConfig
-  private readonly onEvent: (eventData: QueQiaoEvent | JsonRecord | string) => void
+  private readonly onEvent: (eventData: QueQiaoEvent) => void
   private readonly onReconnect: (serverName: string, retryCount: number) => void
   private readonly log: ReturnType<typeof scopedLog>
 
@@ -187,7 +186,7 @@ export class ClientRuntime {
     }
 
     this.forwardClient = createClient(connections)
-    this.bindClientEvents(this.forwardClient, '正向')
+    this.bindClientEvents(this.forwardClient, 'forward')
 
     try {
       await this.forwardClient.connect()
@@ -210,7 +209,7 @@ export class ClientRuntime {
       textOf(config.token) ? { accessToken: textOf(config.token) } : undefined,
     )
 
-    this.bindClientEvents(this.reverseClient, '反向')
+    this.bindClientEvents(this.reverseClient, 'reverse')
 
     try {
       await this.reverseClient.connect()
@@ -221,22 +220,28 @@ export class ClientRuntime {
   }
 
   /** 绑定连接生命周期事件。 */
-  private bindClientEvents(client: QueQiaoClient, mode: '正向' | '反向') {
+  private bindClientEvents(client: QueQiaoClient, mode: 'forward' | 'reverse') {
+    const modeLabel = mode === 'forward' ? '正向连接' : '反向连接'
+
     client.on('connection_open', (serverName) => {
-      this.log.info('network', `服务器 ${serverName} 已连上（${mode}）。`)
+      this.log.info('network', `服务器 ${serverName} 已连上（${modeLabel}）。`)
     })
 
     client.on('connection_close', (serverName, code, reason) => {
-      this.log.info('network', `服务器 ${serverName} 断开了（${mode}，code=${code}，reason=${reason || '-'})。`)
+      const closeReason = textOf(reason) || '-'
+      this.log.info('network', `服务器 ${serverName} 断开了（${modeLabel}，code=${code}，reason=${closeReason}）。`)
     })
 
     client.on('connection_reconnect', (serverName, retryCount, delayMs) => {
-      this.log.info('network', `服务器 ${serverName} 正在重连（${mode}，第 ${retryCount} 次，${delayMs}ms 后重试）。`)
+      const count = Number(retryCount || 0)
+      const delay = Number(delayMs || 0)
+      this.log.info('network', `服务器 ${serverName} 正在重连（${modeLabel}，第 ${count} 次，${delay}ms 后重试）。`)
       this.onReconnect(serverName, retryCount)
     })
 
     client.on('connection_error', (serverName, error) => {
-      this.log.error('network', `服务器 ${serverName || 'unknown'} 连接出错（${mode}）：${toError(error)}`)
+      const server = textOf(serverName) || '未知服务器'
+      this.log.error('network', `服务器 ${server} 连接出错（${modeLabel}）：${toError(error)}`)
     })
 
     client.on('event', this.onEvent)
