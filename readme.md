@@ -1,5 +1,5 @@
-﻿![koishi-plugin-minecraft-bridge](https://socialify.git.ci/CikeyQi/koishi-plugin-minecraft-bridge/image?description=1\&font=Raleway\&forks=1\&issues=1\&language=1\&name=1\&owner=1\&pattern=Circuit%20Board\&pulls=1\&stargazers=1\&theme=Auto)
-
+﻿![koishi-plugin-minecraft-bridge](
+https://socialify.git.ci/CikeyQi/koishi-plugin-minecraft-bridge/image?description=1&font=Raleway&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2FCikeyQi%2Fkoishi-plugin-minecraft-bridge%2Frefs%2Fheads%2Fmain%2Fpublic%2Flogo.png&name=1&owner=1&pattern=Circuit+Board&pulls=1&stargazers=1&theme=Auto)
 <div align="center">
 
 # Minecraft Bridge
