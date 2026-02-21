@@ -1,6 +1,7 @@
 import { createClient, createReverseClient, type QueQiaoClient, type QueQiaoEvent, type RequestOptions } from '@cikeyqi/queqiao-node-sdk'
 import type { Logger } from 'koishi'
 import type { BridgeConfig } from '../values'
+import type { I18nTranslate } from './types'
 import { scopedLog } from './log'
 import { isRecord, textOf, toError } from './utils'
 
@@ -9,6 +10,7 @@ interface ClientRuntimeOptions {
   getConfig: () => BridgeConfig
   onEvent: (eventData: QueQiaoEvent) => void
   onReconnect: (serverName: string, retryCount: number) => void
+  translate?: I18nTranslate
 }
 
 export class ClientRuntime {
@@ -16,6 +18,7 @@ export class ClientRuntime {
   private readonly onEvent: (eventData: QueQiaoEvent) => void
   private readonly onReconnect: (serverName: string, retryCount: number) => void
   private readonly log: ReturnType<typeof scopedLog>
+  private readonly translate: I18nTranslate
 
   private forwardClient: QueQiaoClient | null = null
   private reverseClient: QueQiaoClient | null = null
@@ -27,6 +30,11 @@ export class ClientRuntime {
     this.onEvent = options.onEvent
     this.onReconnect = options.onReconnect
     this.log = scopedLog(options.logger)
+    this.translate = options.translate || ((_, fallback) => fallback)
+  }
+
+  private t(key: string, fallback: string, args: readonly unknown[] = []) {
+    return this.translate(key, fallback, args)
   }
 
   /**
@@ -42,7 +50,10 @@ export class ClientRuntime {
       .then(() => { this.booted = true })
       .catch((error) => {
         this.booted = false
-        this.log.error('system', `连接初始化失败，请检查地址和 token：${toError(error)}`)
+        this.log.error(
+          'system',
+          this.t('log.runtime.bootFailed', 'Connection bootstrap failed, please check endpoint and token: {0}', [toError(error)]),
+        )
       })
       .finally(() => { this.bootTask = null })
 
@@ -53,6 +64,43 @@ export class ClientRuntime {
   async reconnect() {
     this.booted = false
     await this.boot(true)
+  }
+
+  /** 重连单个服务器连接。 */
+  async reconnectConnection(serverName: string) {
+    const targetName = textOf(serverName)
+    if (!targetName) {
+      throw new Error(this.t('error.runtime.reconnectMissingServerName', 'Missing server name, cannot reconnect.'))
+    }
+
+    await this.boot()
+    const clients = [this.reverseClient, this.forwardClient].filter(Boolean) as QueQiaoClient[]
+    if (!clients.length) {
+      throw new Error(this.t('error.runtime.noConnectionForServer', 'Server {0} has no available connection.', [targetName]))
+    }
+
+    let touched = false
+    let lastError: unknown = null
+
+    for (const client of clients) {
+      if (!this.namesForRoute(client).includes(targetName)) continue
+      touched = true
+      try {
+        await client.close({ selfName: targetName, code: 1000, reason: 'manual reconnect' })
+      } catch (error) {
+        lastError = error
+      }
+
+      try {
+        await client.connect({ selfName: targetName })
+      } catch (error) {
+        lastError = error
+      }
+    }
+
+    if (!touched) {
+      throw lastError || new Error(this.t('error.runtime.connectionNotFound', 'No connection route found for server {0}.', [targetName]))
+    }
   }
 
   /** 关闭全部连接并清理事件监听。 */
@@ -76,7 +124,7 @@ export class ClientRuntime {
       try {
         await client.close({ selfName: targetName, code: 1000, reason: 'max retry reached' })
       } catch {
-        // noop
+        // 忽略关闭异常。
       }
     }))
   }
@@ -106,12 +154,20 @@ export class ClientRuntime {
     await this.boot()
 
     const targetName = textOf(serverName)
-    if (!targetName) throw new Error('缺少服务器名，无法发送请求。')
-    if (!textOf(api)) throw new Error('请求接口不能为空。')
-    if (!isRecord(data)) throw new Error('请求参数格式不对。')
+    if (!targetName) {
+      throw new Error(this.t('error.runtime.requestMissingServerName', 'Missing server name, cannot send request.'))
+    }
+    if (!textOf(api)) {
+      throw new Error(this.t('error.runtime.requestEmptyApi', 'Request API cannot be empty.'))
+    }
+    if (!isRecord(data)) {
+      throw new Error(this.t('error.runtime.requestInvalidData', 'Invalid request payload format.'))
+    }
 
     const clients = this.clientQueue(targetName)
-    if (!clients.length) throw new Error(`服务器 ${targetName} 当前没有可用连接。`)
+    if (!clients.length) {
+      throw new Error(this.t('error.runtime.noConnectionForServer', 'Server {0} has no available connection.', [targetName]))
+    }
 
     const requestOptions = { ...options, selfName: targetName }
 
@@ -124,7 +180,7 @@ export class ClientRuntime {
       }
     }
 
-    throw lastError || new Error(`服务器 ${targetName} 请求失败，请稍后再试。`)
+    throw lastError || new Error(this.t('error.runtime.requestFailed', 'Request to server {0} failed, please retry later.', [targetName]))
   }
 
   /** 按当前配置拉起连接。 */
@@ -162,7 +218,12 @@ export class ClientRuntime {
       const selfName = textOf(item.name)
       const url = textOf(item.url)
       if (!selfName || !url) {
-        this.log.warn('network', `服务器 ${selfName || '未命名'} 的正向连接配置不完整，已跳过。`)
+        this.log.warn(
+          'network',
+          this.t('log.runtime.forwardConfigIncomplete', 'Skipped forward config for server {0} because url/name is incomplete.', [
+            selfName || this.t('common.unknownServer', 'Unknown server'),
+          ]),
+        )
         continue
       }
 
@@ -181,7 +242,7 @@ export class ClientRuntime {
   private async startForward(config: BridgeConfig) {
     const connections = this.buildForward(config)
     if (!connections.length) {
-      this.log.debug(config.debug, 'network', '未找到可用的正向连接配置。')
+      this.log.debug(config.debug, 'network', this.t('log.runtime.noForwardConfig', 'No valid forward connection config found.'))
       return
     }
 
@@ -191,7 +252,10 @@ export class ClientRuntime {
     try {
       await this.forwardClient.connect()
     } catch (error) {
-      this.log.error('network', `正向连接启动失败：${toError(error)}`)
+      this.log.error(
+        'network',
+        this.t('log.runtime.forwardStartFailed', 'Failed to start forward connection: {0}', [toError(error)]),
+      )
     }
   }
 
@@ -200,7 +264,7 @@ export class ClientRuntime {
     const port = Number(config.port)
     const path = textOf(config.path)
     if (!port || !path) {
-      this.log.error('network', '反向连接缺少端口或路径，无法启动。')
+      this.log.error('network', this.t('log.runtime.reverseMissingConfig', 'Reverse connection requires both port and path.'))
       return
     }
 
@@ -213,35 +277,62 @@ export class ClientRuntime {
 
     try {
       await this.reverseClient.connect()
-      this.log.info('network', `反向连接已启动：ws://localhost:${port}${path}`)
+      this.log.info(
+        'network',
+        this.t('log.runtime.reverseStarted', 'Reverse connection started: ws://localhost:{0}{1}', [port, path]),
+      )
     } catch (error) {
-      this.log.error('network', `反向连接启动失败：${toError(error)}`)
+      this.log.error(
+        'network',
+        this.t('log.runtime.reverseStartFailed', 'Failed to start reverse connection: {0}', [toError(error)]),
+      )
     }
   }
 
   /** 绑定连接生命周期事件。 */
   private bindClientEvents(client: QueQiaoClient, mode: 'forward' | 'reverse') {
-    const modeLabel = mode === 'forward' ? '正向连接' : '反向连接'
+    const modeLabel = mode === 'forward'
+      ? this.t('log.runtime.mode.forward', 'forward')
+      : this.t('log.runtime.mode.reverse', 'reverse')
 
     client.on('connection_open', (serverName) => {
-      this.log.info('network', `服务器 ${serverName} 已连上（${modeLabel}）。`)
+      this.log.info('network', this.t('log.runtime.connectionOpen', 'Server {0} connected ({1}).', [serverName, modeLabel]))
     })
 
     client.on('connection_close', (serverName, code, reason) => {
       const closeReason = textOf(reason) || '-'
-      this.log.info('network', `服务器 ${serverName} 断开了（${modeLabel}，code=${code}，reason=${closeReason}）。`)
+      this.log.info(
+        'network',
+        this.t('log.runtime.connectionClose', 'Server {0} disconnected ({1}, code={2}, reason={3}).', [
+          serverName,
+          modeLabel,
+          code,
+          closeReason,
+        ]),
+      )
     })
 
     client.on('connection_reconnect', (serverName, retryCount, delayMs) => {
       const count = Number(retryCount || 0)
       const delay = Number(delayMs || 0)
-      this.log.info('network', `服务器 ${serverName} 正在重连（${modeLabel}，第 ${count} 次，${delay}ms 后重试）。`)
+      this.log.info(
+        'network',
+        this.t('log.runtime.connectionReconnect', 'Server {0} reconnecting ({1}, attempt {2}, retry in {3}ms).', [
+          serverName,
+          modeLabel,
+          count,
+          delay,
+        ]),
+      )
       this.onReconnect(serverName, retryCount)
     })
 
     client.on('connection_error', (serverName, error) => {
-      const server = textOf(serverName) || '未知服务器'
-      this.log.error('network', `服务器 ${server} 连接出错（${modeLabel}）：${toError(error)}`)
+      const server = textOf(serverName) || this.t('common.unknownServer', 'Unknown server')
+      this.log.error(
+        'network',
+        this.t('log.runtime.connectionError', 'Server {0} connection error ({1}): {2}', [server, modeLabel, toError(error)]),
+      )
     })
 
     client.on('event', this.onEvent)

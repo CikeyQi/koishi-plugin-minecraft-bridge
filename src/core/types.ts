@@ -1,5 +1,3 @@
-import type { RequestOptions } from '@cikeyqi/queqiao-node-sdk'
-
 export type JsonRecord = Record<string, unknown>
 
 export interface SessionElementLike {
@@ -30,24 +28,6 @@ export interface SessionLike {
   } | undefined
   text?: (path: string, params?: readonly unknown[]) => string
   send: (content: string) => Promise<unknown>
-}
-
-export interface GroupRequestPayload {
-  api: string
-  data: Record<string, unknown>
-  options?: RequestOptions
-}
-
-export interface GroupRequestError {
-  errorKey: string
-  errorFallback: string
-  errorParams?: readonly unknown[]
-}
-
-export interface GroupApiCommand {
-  pattern: RegExp
-  actionName: string
-  build: (match: RegExpMatchArray) => GroupRequestPayload | GroupRequestError | null | undefined
 }
 
 export type I18nTranslate = (key: string, fallback: string, params?: readonly unknown[]) => string
