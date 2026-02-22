@@ -34,35 +34,48 @@ export const isDashMessage = (prefix: string, content: string) => {
 
 /**
  * 将 Dash 风格命令转换为内部命令。
- * 转换失败时返回 null。
+ * - matched: 已识别并转换成功
+ * - invalid: 是已支持命令，但参数格式错误
+ * - unknown: 不是本插件支持的 Dash 子命令，交由其他插件处理
  */
-export const buildDashExec = (input: string): string | null => {
+export type DashExecResult =
+  | { kind: 'matched'; commandText: string }
+  | { kind: 'invalid' }
+  | { kind: 'unknown' }
+
+export const buildDashExec = (input: string): DashExecResult => {
   const text = textOf(input)
 
   const statusMatch = text.match(/^-q(?:\s+-s\s+(\S+))?$/i)
-  if (statusMatch) return `${DASH.status}${serverPart(statusMatch[1])}`
+  if (statusMatch) return { kind: 'matched', commandText: `${DASH.status}${serverPart(statusMatch[1])}` }
+  if (/^-q(?:\s+|$)/i.test(text)) return { kind: 'invalid' }
 
   const reconnectMatch = text.match(/^-r(?:\s+-s\s+(\S+))?$/i)
-  if (reconnectMatch) return `${DASH.reconnect}${serverPart(reconnectMatch[1])}`
+  if (reconnectMatch) return { kind: 'matched', commandText: `${DASH.reconnect}${serverPart(reconnectMatch[1])}` }
+  if (/^-r(?:\s+|$)/i.test(text)) return { kind: 'invalid' }
 
   const privateMatch = text.match(/^-p\s+(\S+)\s+([\s\S]+)$/i)
   if (privateMatch) {
     const { body, serverName } = splitServer(privateMatch[2])
-    if (!body) return null
-    return `${DASH.private} ${textOf(privateMatch[1])} ${body}${serverPart(serverName)}`
+    if (!body) return { kind: 'invalid' }
+    return { kind: 'matched', commandText: `${DASH.private} ${textOf(privateMatch[1])} ${body}${serverPart(serverName)}` }
   }
+  if (/^-p(?:\s+|$)/i.test(text)) return { kind: 'invalid' }
 
   const actionMatch = text.match(/^-([btuac])\s+([\s\S]+)$/i)
-  if (!actionMatch) return null
+  if (!actionMatch) {
+    if (/^-([btuac])(?:\s+|$)/i.test(text)) return { kind: 'invalid' }
+    return { kind: 'unknown' }
+  }
 
   const action = actionMatch[1].toLowerCase()
   const { body, serverName } = splitServer(actionMatch[2])
-  if (!body) return null
+  if (!body) return { kind: 'invalid' }
 
-  if (action === 'b') return `${DASH.broadcast} ${body}${serverPart(serverName)}`
-  if (action === 't') return `${DASH.title} ${body}${serverPart(serverName)}`
-  if (action === 'u') return `${DASH.subtitle} ${body}${serverPart(serverName)}`
-  if (action === 'a') return `${DASH.actionbar} ${body}${serverPart(serverName)}`
-  if (action === 'c') return `${DASH.rcon} ${body}${serverPart(serverName)}`
-  return null
+  if (action === 'b') return { kind: 'matched', commandText: `${DASH.broadcast} ${body}${serverPart(serverName)}` }
+  if (action === 't') return { kind: 'matched', commandText: `${DASH.title} ${body}${serverPart(serverName)}` }
+  if (action === 'u') return { kind: 'matched', commandText: `${DASH.subtitle} ${body}${serverPart(serverName)}` }
+  if (action === 'a') return { kind: 'matched', commandText: `${DASH.actionbar} ${body}${serverPart(serverName)}` }
+  if (action === 'c') return { kind: 'matched', commandText: `${DASH.rcon} ${body}${serverPart(serverName)}` }
+  return { kind: 'unknown' }
 }

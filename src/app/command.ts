@@ -67,13 +67,15 @@ export class CommandCenter {
     if (!isDashMessage(prefix, content)) return false
 
     const body = dashBody(prefix, content)
-    const commandText = buildDashExec(body)
-    if (!commandText) {
+    const result = buildDashExec(body)
+    if (result.kind === 'unknown') return false
+
+    if (result.kind === 'invalid') {
       await session.send(this.deps.language.sess(session, 'message.invalidCommandArgs', '命令参数格式不正确'))
       return true
     }
 
-    await session.execute(commandText)
+    await session.execute(result.commandText)
     return true
   }
 
