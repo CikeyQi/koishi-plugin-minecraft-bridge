@@ -9,7 +9,7 @@ import { buildDashExec, dashBody, isDashMessage } from './dash'
 import type { Lang } from './lang'
 import { runRcon } from './rcon'
 import type { Route } from './route'
-import { isGroup } from './sess'
+import { isAdmin, isGroup } from './sess'
 
 type BridgeLog = ReturnType<typeof makeLog>
 
@@ -108,8 +108,24 @@ export class CommandCenter {
     return this.commandText(`action.${key}`, fallback)
   }
 
+  private async allowServer(session: SessionLike, serverName: string) {
+    const name = textOf(serverName)
+    if (!name) return true
+    if (isAdmin(session)) return true
+
+    await session.send(
+      this.deps.language.sess(
+        session,
+        'message.serverOptionNoPermission',
+        '使用 -s 指定服务器需要 authority >= 4',
+      ),
+    )
+    return false
+  }
+
   private async resolveTargets(session: SessionLike, serverName: string) {
     const name = textOf(serverName)
+    if (!(await this.allowServer(session, name))) return [] as string[]
 
     if (name) {
       if (!this.deps.route.one(name)) {
@@ -144,6 +160,8 @@ export class CommandCenter {
 
   private async runStatus(session: SessionLike, serverName = '') {
     try {
+      if (!(await this.allowServer(session, serverName))) return
+
       const onlineSet = new Set(this.deps.runtime.connectedNames())
       const output: string[] = [this.deps.language.sess(session, 'message.statusHeader', '当前连接状态：')]
 
@@ -178,6 +196,8 @@ export class CommandCenter {
 
   private async runReconnect(session: SessionLike, serverName = '') {
     const name = textOf(serverName)
+    if (!(await this.allowServer(session, name))) return
+
     if (!name) {
       await session.send(this.deps.language.sess(session, 'message.reconnectStarting', '正在重连全部服务器，请稍候...'))
 

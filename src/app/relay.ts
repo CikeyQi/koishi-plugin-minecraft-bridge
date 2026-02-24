@@ -39,6 +39,34 @@ export class RelayCenter {
     return this.deps.language.root(`log.${key}`, fallback, args)
   }
 
+  private senderId(session: SessionLike) {
+    return textOf((session as any)?.author?.id ?? session?.userId)
+  }
+
+  private commandName(commandText: string) {
+    const first = textOf(commandText).split(/\s+/, 1)[0]
+    return textOf(first).toLowerCase()
+  }
+
+  private isPublicRcon(server: ServerItemConfig, commandText: string) {
+    const current = this.commandName(commandText)
+    if (!current) return false
+
+    const allowList = uniqTexts(server.commands || []).map(item => item.toLowerCase())
+    return allowList.includes(current)
+  }
+
+  private canRcon(session: SessionLike, server: ServerItemConfig, commandText: string) {
+    if (this.isPublicRcon(server, commandText)) return true
+    if (isAdmin(session)) return true
+
+    const userId = this.senderId(session)
+    if (!userId) return false
+
+    const allowList = uniqTexts(server.users || [])
+    return allowList.includes(userId)
+  }
+
   /** 处理来自 QueQiao 的事件并转发到群。 */
   public onEvent(rawEvent: QueQiaoEvent) {
     try {
@@ -82,7 +110,7 @@ export class RelayCenter {
     await this.eachServer(session, async (server, serverName) => {
       const commandText = this.rconText(session.content || '', server)
       if (commandText !== null) {
-        if (isAdmin(session)) {
+        if (this.canRcon(session, server, commandText)) {
           await runRcon({
             runtime: this.deps.runtime,
             language: this.deps.language,

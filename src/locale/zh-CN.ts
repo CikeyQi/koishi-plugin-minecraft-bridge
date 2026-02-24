@@ -40,6 +40,7 @@ const zhCN = {
       invalidCommandArgs: '命令参数解析失败，请检查输入格式。',
       privateNeedServer: '私聊场景下有多个在线服务器，请使用 -s 指定目标服务器。',
       serverNotFound: '找不到目标服务器：{0}',
+      serverOptionNoPermission: '使用 -s 指定服务器需要 authority >= 4。',
       groupApi: {
         titleRequired: '请输入要发送的标题内容',
         subtitleRequired: '请输入要发送的副标题内容',

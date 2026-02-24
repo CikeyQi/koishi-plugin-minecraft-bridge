@@ -40,6 +40,7 @@ const enUS = {
       invalidCommandArgs: 'Failed to parse command arguments. Please check the input format.',
       privateNeedServer: 'Multiple servers are online in private chat. Please use -s to specify one.',
       serverNotFound: 'Target server not found: {0}',
+      serverOptionNoPermission: 'Using -s to specify a server requires authority >= 4.',
       groupApi: {
         titleRequired: 'Please enter the title content.',
         subtitleRequired: 'Please enter the subtitle content.',

@@ -8,6 +8,7 @@
   bots: string[]
   rcon: string
   users: string[]
+  commands: string[]
   ciImage: boolean
   mask: string
 }

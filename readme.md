@@ -77,9 +77,12 @@ npm i koishi-plugin-minecraft-bridge
 | `token` | 正向连接 token（QueQiao `access_token`） | `''` |
 | `retries` | 最大重连次数，`0` 表示不限 | `3` |
 | `rcon` | 群内 RCON 前缀 | `/` |
-| `users` | 保留字段（当前版本 RCON 仅允许 authority >= 4） | `[]` |
+| `users` | 群内前缀 RCON 白名单 | `[]` |
+| `commands` | 群内前缀 RCON 命令白名单 | `[]` |
 | `ciImage` | 图片是否转 CICode 后再发到 MC | `false` |
 | `mask` | MC -> 群消息过滤正则（无需写 `/.../g`） | `''` |
+
+说明：例如配置 `commands = ['list']` 后，群内发送 `/list` 或 `/list aaa` 可由任何人触发；`/execute ... run list` 不会命中该白名单。
 
 ## 🤖 命令说明
 

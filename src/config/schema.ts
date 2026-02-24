@@ -27,7 +27,8 @@ const linkSchema = Schema.object({
 
 const cmdSchema = Schema.object({
   rcon: Schema.string().default('/').description('群内 RCON 前缀，例如 /list'),
-  users: textArray('保留字段：当前版本仅允许 authority >= 4 执行 RCON'),
+  users: textArray('群内前缀 RCON 白名单'),
+  commands: textArray('群内前缀 RCON 命令白名单'),
 }).description('命令设置').collapse()
 
 const syncSchema = Schema.object({
